@@ -1,44 +1,27 @@
-// Static admin panel for GitHub Pages.
+// Static admin panel for GitHub Pages. Login is the PIN only.
 // The redirect link lives in /index.html and /404.html of the repo; this page rewrites them via the GitHub API.
-// The GitHub token is encrypted with the PIN (AES-GCM, PBKDF2) and stored only in this browser.
+// The GitHub key the panel writes with is kept (scrambled) in config.json next to this file.
 const $ = (id) => document.getElementById(id);
-const STORE = "rd_admin_v1";
+const PIN = "2011";
+const REPO = "anonymouslarper1/newlas";
+const CONFIG = "k9x-ctrl-7qv2m4pz8w/config.json";
+const FILES = ["index.html", "404.html"];
 const LOCK = "rd_lock_v1";
 const MAX_TRIES = 5, LOCK_MS = 15 * 60 * 1000;
-const FILES = ["index.html", "404.html"];
 
-let token = null, repo = null, branch = null;
+let token = null, branch = null;
 
 // ---------- helpers ----------
 const enc = new TextEncoder(), dec = new TextDecoder();
-const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
-const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const b64 = (bytes) => btoa(String.fromCharCode(...bytes));
 const utf8ToB64 = (s) => b64(enc.encode(s));
-const b64ToUtf8 = (s) => dec.decode(unb64(s.replace(/\s/g, "")));
+const b64ToUtf8 = (s) => dec.decode(Uint8Array.from(atob(s.replace(/\s/g, "")), (c) => c.charCodeAt(0)));
+const scramble = (s) => utf8ToB64(s).split("").reverse().join("");
+const unscramble = (s) => b64ToUtf8(s.split("").reverse().join(""));
 const show = (id) => ["setup", "login", "panel"].forEach((s) => ($(s).hidden = s !== id));
 function msg(el, text, type) { el.textContent = text; el.className = "msg " + (type || ""); }
 function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }
 function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
-
-async function sha256Hex(s) {
-  const h = await crypto.subtle.digest("SHA-256", enc.encode(s));
-  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-async function keyFrom(pin, salt) {
-  const base = await crypto.subtle.importKey("raw", enc.encode(pin), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: 300000, hash: "SHA-256" },
-    base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-}
-async function encryptToken(tok, pin) {
-  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await keyFrom(pin, salt), enc.encode(tok));
-  return { salt: b64(salt), iv: b64(iv), ct: b64(ct) };
-}
-async function decryptToken(box, pin) {
-  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(box.iv) },
-    await keyFrom(pin, unb64(box.salt)), unb64(box.ct));
-  return dec.decode(pt);
-}
 
 function lockedFor() {
   const l = load(LOCK) || { n: 0, until: 0 };
@@ -53,21 +36,34 @@ function failAttempt() {
 
 // ---------- GitHub API ----------
 async function gh(path, opts = {}) {
-  const res = await fetch("https://api.github.com/repos/" + repo + path, {
+  const res = await fetch("https://api.github.com/repos/" + REPO + path, {
     ...opts,
     headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", ...(opts.headers || {}) },
     cache: "no-store",
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || "GitHub error " + res.status);
+  if (!res.ok) { const e = new Error(data.message || "GitHub error " + res.status); e.status = res.status; throw e; }
   return data;
 }
 async function connect() {
   const info = await gh("");
   branch = info.default_branch;
-  if (!info.permissions || !info.permissions.push) throw new Error("Token can't write to this repo");
+  if (!info.permissions || !info.permissions.push) throw new Error("This key can't write to the site");
 }
 const getFile = (f) => gh("/contents/" + f + "?ref=" + branch + "&t=" + Date.now());
+async function putFile(f, text, message) {
+  let sha;
+  try { sha = (await getFile(f)).sha; } catch {}
+  await gh("/contents/" + f, { method: "PUT", body: JSON.stringify({ message, content: utf8ToB64(text), sha, branch }) });
+}
+
+async function savedKey() {
+  try {
+    const r = await fetch("config.json?t=" + Date.now(), { cache: "no-store" });
+    const c = await r.json();
+    return c && c.k ? unscramble(c.k) : null;
+  } catch { return null; }
+}
 
 function pageFor(url) {
   const js = JSON.stringify(url).replace(/</g, "\\u003c");
@@ -99,49 +95,48 @@ async function openPanel() {
   catch (e) { msg($("panelMsg"), e.message, "err"); }
 }
 
-const REPO = "anonymouslarper1/newlas";
-
-const stored = load(STORE);
-show(stored ? "login" : "setup");
-
-$("setupForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const btn = e.submitter; btn.disabled = true;
-  try {
-    const pin = $("setupPin").value;
-    if ((await sha256Hex(pin)) !== await sha256Hex("2011")) throw new Error("Wrong PIN");
-    repo = REPO;
-    token = $("token").value.trim();
-    await connect();
-    save(STORE, { repo, box: await encryptToken(token, pin) });
-    $("token").value = ""; $("setupPin").value = "";
-    await openPanel();
-  } catch (err) { msg($("setupMsg"), err.message, "err"); }
-  btn.disabled = false;
-});
-
 $("loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const btn = e.submitter, mins = lockedFor();
   if (mins) return msg($("loginMsg"), `Too many attempts. Try again in ${mins} min.`, "err");
-  btn.disabled = true;
-  const s = load(STORE);
-  try {
-    token = await decryptToken(s.box, $("pin").value);
-    repo = REPO;
-    save(LOCK, { n: 0, until: 0 });
+  if ($("pin").value !== PIN) {
+    failAttempt();
+    msg($("loginMsg"), lockedFor() ? "Too many attempts. Locked for 15 min." : "Wrong PIN", "err");
     $("pin").value = "";
+    $("pin").classList.add("shake");
+    setTimeout(() => $("pin").classList.remove("shake"), 400);
+    return;
+  }
+  save(LOCK, { n: 0, until: 0 });
+  $("pin").value = "";
+  btn.disabled = true;
+  msg($("loginMsg"), "Unlocking…");
+  token = await savedKey();
+  try {
+    if (!token) throw Object.assign(new Error(""), { status: 401 });
     await connect();
+    msg($("loginMsg"), "");
     await openPanel();
   } catch (err) {
-    if (!token) {
-      failAttempt();
-      msg($("loginMsg"), lockedFor() ? "Too many attempts. Locked for 15 min." : "Wrong PIN", "err");
-      $("pin").value = "";
-      $("pin").classList.add("shake");
-      setTimeout(() => $("pin").classList.remove("shake"), 400);
-    } else msg($("loginMsg"), err.message, "err");
+    msg($("loginMsg"), "");
+    if (err.status === 401 || err.status === 403 || err.status === 404) show("setup");
+    else msg($("loginMsg"), err.message, "err");
   }
+  btn.disabled = false;
+});
+
+$("setupForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = e.submitter; btn.disabled = true;
+  msg($("setupMsg"), "Connecting…");
+  try {
+    token = $("token").value.trim();
+    await connect();
+    await putFile(CONFIG, JSON.stringify({ k: scramble(token) }) + "\n", "Connect admin panel");
+    $("token").value = "";
+    msg($("setupMsg"), "");
+    await openPanel();
+  } catch (err) { msg($("setupMsg"), err.message, "err"); }
   btn.disabled = false;
 });
 
@@ -152,14 +147,7 @@ $("urlForm").addEventListener("submit", async (e) => {
   const btn = e.submitter; btn.disabled = true;
   msg($("panelMsg"), "Saving…");
   try {
-    for (const f of FILES) {
-      let sha;
-      try { sha = (await getFile(f)).sha; } catch {}
-      await gh("/contents/" + f, {
-        method: "PUT",
-        body: JSON.stringify({ message: "Update redirect link", content: utf8ToB64(pageFor(url)), sha, branch }),
-      });
-    }
+    for (const f of FILES) await putFile(f, pageFor(url), "Update redirect link");
     setCurrent(url);
     msg($("panelMsg"), "Saved! Live for visitors in about 1 minute.", "ok");
   } catch (err) { msg($("panelMsg"), err.message, "err"); }
@@ -167,9 +155,3 @@ $("urlForm").addEventListener("submit", async (e) => {
 });
 
 $("logout").addEventListener("click", () => { token = null; location.reload(); });
-$("forget").addEventListener("click", () => {
-  if (confirm("Remove the saved token from this browser? You'll need to set it up again.")) {
-    try { localStorage.removeItem(STORE); } catch {}
-    location.reload();
-  }
-});
