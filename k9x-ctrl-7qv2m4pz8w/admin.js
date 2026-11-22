@@ -99,16 +99,10 @@ async function openPanel() {
   catch (e) { msg($("panelMsg"), e.message, "err"); }
 }
 
-function guessRepo() {
-  const h = location.hostname;
-  if (!h.endsWith(".github.io")) return "";
-  const owner = h.split(".")[0];
-  const seg = location.pathname.split("/").filter(Boolean);
-  return seg.length >= 2 ? owner + "/" + seg[0] : owner + "/" + h;
-}
+const REPO = "anonymouslarper1/newlas";
 
 const stored = load(STORE);
-if (stored) show("login"); else { $("repo").value = guessRepo(); show("setup"); }
+show(stored ? "login" : "setup");
 
 $("setupForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -116,7 +110,7 @@ $("setupForm").addEventListener("submit", async (e) => {
   try {
     const pin = $("setupPin").value;
     if ((await sha256Hex(pin)) !== await sha256Hex("2011")) throw new Error("Wrong PIN");
-    repo = $("repo").value.trim().replace(/^https?:\/\/github\.com\//, "").replace(/\/$/, "");
+    repo = REPO;
     token = $("token").value.trim();
     await connect();
     save(STORE, { repo, box: await encryptToken(token, pin) });
@@ -134,7 +128,7 @@ $("loginForm").addEventListener("submit", async (e) => {
   const s = load(STORE);
   try {
     token = await decryptToken(s.box, $("pin").value);
-    repo = s.repo;
+    repo = REPO;
     save(LOCK, { n: 0, until: 0 });
     $("pin").value = "";
     await connect();
