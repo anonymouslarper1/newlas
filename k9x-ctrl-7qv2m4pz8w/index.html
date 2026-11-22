@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://api.github.com">
+  <title>Control</title>
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <main class="card">
+    <!-- First time on this device -->
+    <section id="setup" hidden>
+      <div class="logo">🔧</div>
+      <h1>Set up this device</h1>
+      <p class="sub">One time only. Your token is locked with your PIN and stays in this browser.</p>
+      <form id="setupForm" autocomplete="off">
+        <input id="repo" type="text" placeholder="username/repo-name" required>
+        <input id="token" type="password" placeholder="GitHub token (github_pat_...)" required>
+        <input id="setupPin" class="pin" type="password" inputmode="numeric" maxlength="12" placeholder="PIN" required>
+        <button type="submit">Save &amp; unlock</button>
+      </form>
+      <p id="setupMsg" class="msg"></p>
+    </section>
+
+    <!-- PIN login -->
+    <section id="login" hidden>
+      <div class="logo">🔒</div>
+      <h1>Admin</h1>
+      <p class="sub">Enter your PIN</p>
+      <form id="loginForm" autocomplete="off">
+        <input id="pin" class="pin" type="password" inputmode="numeric" maxlength="12" placeholder="••••" required>
+        <button type="submit">Unlock</button>
+      </form>
+      <p id="loginMsg" class="msg"></p>
+      <button id="forget" class="link">Reset this device</button>
+    </section>
+
+    <!-- Panel -->
+    <section id="panel" hidden>
+      <div class="row">
+        <h1>Redirect link</h1>
+        <button id="logout" class="ghost">Lock</button>
+      </div>
+      <p class="sub">Every visitor is sent here instantly.</p>
+      <div class="current">
+        <span>Current</span>
+        <a id="current" target="_blank" rel="noopener noreferrer">loading…</a>
+      </div>
+      <form id="urlForm">
+        <input id="url" type="url" placeholder="https://..." required>
+        <button type="submit">Save</button>
+      </form>
+      <p id="panelMsg" class="msg"></p>
+    </section>
+  </main>
+  <script src="admin.js"></script>
+</body>
+</html>
