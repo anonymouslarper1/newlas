@@ -1,0 +1,58 @@
+name: Build IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild \
+            -project SparkIntelligence.xcodeproj \
+            -scheme SparkIntelligence \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            -quiet build
+
+      - name: Package IPA
+        run: |
+          APP=build/Build/Products/Release-iphoneos/SparkIntelligence.app
+          # Ad-hoc sign so the App Group entitlement is embedded; sideloading tools re-sign with your Apple ID.
+          codesign -f -s - --entitlements SparkBroadcast/SparkBroadcast.entitlements "$APP/PlugIns/SparkBroadcast.appex"
+          codesign -f -s - --entitlements SparkIntelligence/SparkIntelligence.entitlements "$APP"
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry SparkIntelligence.ipa Payload
+          ls -lh SparkIntelligence.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SparkIntelligence-ipa
+          path: SparkIntelligence.ipa
+
+      - name: Publish to "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest SparkIntelligence.ipa \
+            --title "Spark Intelligence (latest build)" \
+            --notes "Built from ${GITHUB_SHA::7}. Install with AltStore, SideStore or Sideloadly."
